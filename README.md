@@ -10,6 +10,19 @@ SELENE 是 THEIA 的独立时间线采集端，包含 Android 和 Windows 两个
 它只在本地采集经过授权的非文本背景，并写成不可变快照供 THEIA 直接导入。
 SELENE 不读取聊天数据库，也不上传或解释聊天内容。
 
+## Windows 命令行安装
+
+Windows 桌面版目前是唯一支持命令行构建的桌面平台。在 PowerShell 中执行；首次
+安装 `winget` 包后请重新打开 PowerShell，再继续执行后续命令：
+
+```powershell
+winget install Git.Git
+winget install Microsoft.DotNet.SDK.9
+git clone https://github.com/bakahuiii/SELENE.git
+cd SELENE
+dotnet run --project desktop\SELENE.Windows\SELENE.Windows.csproj
+```
+
 Android 0.5.2 已内置经过校验的 Syncthing 原生核心。Windows SELENE 会生成 5 分钟
 有效的一次性二维码并自动批准扫码手机；首次同局域网配对后，后续可跨网络自动补传，
 不需要自建服务器或再次扫码。完整说明见

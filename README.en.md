@@ -11,6 +11,18 @@ or modifies THEIA files.
 SELENE does not read chat databases, notification contents, SMS, calls,
 keyboard input, payment history, screenshots, or other-application databases.
 
+## Windows command-line installation
+
+Windows is currently the only desktop platform supported by the command-line build. Run these commands in PowerShell. After installing packages with `winget` for the first time, open a new PowerShell window before continuing:
+
+```powershell
+winget install Git.Git
+winget install Microsoft.DotNet.SDK.9
+git clone https://github.com/bakahuiii/SELENE.git
+cd SELENE
+dotnet run --project desktop\SELENE.Windows\SELENE.Windows.csproj
+```
+
 Android 0.5.2 embeds a verified Syncthing native core. SELENE Windows creates a
 five-minute one-use enrollment QR and automatically approves the scanning
 phone. After one same-LAN enrollment, later sync works across networks without
