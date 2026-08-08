@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-SELENE 0.5.2 contains the following third-party components.
+SELENE 0.5.4 contains the following third-party components.
 
 ## Syncthing-Fork / Syncthing native core
 

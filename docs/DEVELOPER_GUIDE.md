@@ -2,8 +2,8 @@
 
 [English](DEVELOPER_GUIDE.md) | [简体中文](DEVELOPER_GUIDE.zh-CN.md)
 
-This guide is for developers changing SELENE or its THEIA hand-off. It
-describes the `0.5.2` codebase, not an aspirational design. Read it before
+This guide is for developers changing SELENE or its HYPERION hand-off. It
+describes the `0.5.4` codebase, not an aspirational design. Read it before
 adding a signal, changing movement detection, altering the export schema, or
 publishing a release.
 
@@ -15,20 +15,20 @@ SELENE is a local, standalone timeline collector with two independent clients:
 - Windows collects user-selected desktop activity, idle, power, and network
   state; sensitive window, path, and browser metadata is opt-in.
 
-It is deliberately **not** a THEIA plugin, a cloud service, or a database
+It is deliberately **not** a HYPERION plugin, a cloud service, or a database
 manager. Each client writes new immutable files below a user-selected export
-directory. THEIA is a separate consumer that imports the files later.
+directory. HYPERION is a separate consumer that imports the files later.
 
 The following invariants are more important than any individual collector:
 
 1. A collector writes a new snapshot; it never reads, merges, overwrites, or
    deletes an earlier SELENE snapshot.
 2. The selected export directory is the only cross-application data boundary.
-   SELENE does not scan THEIA files or private data belonging to another app.
-3. Event time is the time the signal happened. Import time belongs to THEIA.
+   SELENE does not scan HYPERION files or private data belonging to another app.
+3. Event time is the time the signal happened. Import time belongs to HYPERION.
 4. Exact coordinates require explicit capture consent and are never projected
-   to THEIA's model input.
-5. A schema change must remain readable by the deployed THEIA importer, or it
+   to HYPERION's model input.
+5. A schema change must remain readable by the deployed HYPERION importer, or it
    must use a new schema version.
 
 ## 2. Read This First
@@ -39,8 +39,8 @@ Read the documents in this order when joining the project:
 2. [EXPORT_LAYOUT.md](EXPORT_LAYOUT.md) for the on-disk contract.
 3. [ANDROID_MOVEMENT.md](ANDROID_MOVEMENT.md) or
    [WINDOWS_DESKTOP.md](WINDOWS_DESKTOP.md) for a platform-specific change.
-4. [THEIA SELENE event contract](https://github.com/bakahuiii/THEIA/blob/main/docs/SELENE_EVENTS.md)
-   before modifying events that THEIA imports.
+4. [HYPERION SELENE event contract](https://github.com/bakahuiii/HYPERION/blob/main/docs/SELENE_EVENTS.md)
+   before modifying events that HYPERION imports.
 5. [RELEASE_PROCESS.md](RELEASE_PROCESS.md) before publishing binaries.
 6. [P2P_SYNC.md](P2P_SYNC.md) and
    [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) before changing remote sync.
@@ -51,17 +51,19 @@ Read the documents in this order when joining the project:
 | --- | --- | --- |
 | Android configuration | `app/src/main/.../MainActivity.kt`, `AutoCollectionSettings.kt` | Settings screen, Android permission sequence, collection gates, WorkManager schedule. |
 | Android periodic collectors | `AutoContextWorker.kt`, `PlaceTagger.kt`, `OnlinePlaceEnricher.kt` | Hourly-ish non-continuous signals and a fresh-location fallback. |
-| Android movement | `MovementTrackingService.kt` | Foreground location service, filtering, movement state machine, batches, summary event. |
+| Android movement | `MovementTrackingService.kt`, `MovementSignalPolicy.kt` | Foreground location service, provider-aware filtering, movement state machine, batches, and summary event. |
 | Android output | `ContextOutput.kt` | SAF or private sync-root writes, atomic publication, and local-offset timestamps. |
-| Android P2P | `SyncthingService.kt`, `SyncthingClient.kt`, `PairingCode.kt`, `PairingManager.kt` | Embedded-core lifecycle, loopback REST/CLI, pairing validation, and enrollment. |
+| Android P2P | `SyncthingService.kt`, `SyncthingClient.kt`, `PairingCode.kt`, `PairingManager.kt`, `SnapshotCleanup.kt` | Embedded-core lifecycle, loopback REST/CLI, pairing migration, ACK verification, and safe cleanup. |
 | Windows UI | `desktop/SELENE.Windows/MainWindow.xaml.cs` | Tray-window lifecycle, timers, settings binding, capture feedback. |
 | Windows capture | `Core/DesktopCollector.cs`, `ForegroundSessionTracker.cs`, `SystemSnapshotCollector.cs` | Signal collection, foreground session accounting, power/network/idle values. |
 | Windows output | `Core/SeleneProtocol.cs` | Event records, compact JSON, unique immutable snapshot allocation. |
 | Windows local state | `Core/SettingsStore.cs`, `AppLogger.cs`, `WindowsStartup.cs` | Settings, diagnostic log, optional current-user startup entry. |
-| Windows P2P | `Core/SyncthingPairingService.cs` | Syncthing preparation, QR payload, pinned enrollment, and device/folder configuration. |
+| Windows P2P | `Core/SyncthingPairingService.cs`, `Core/SnapshotArchiveService.cs` | Syncthing preparation, live status, pinned enrollment, durable archive, and ACK emission. |
+| Windows derived timeline | `Core/DailyMergedTimelineService.cs` | Rebuildable local-day combined JSON from Android and Windows immutable snapshots. |
+| Windows local daily narrative | `Core/DailyNarrativeService.cs` | Deterministic local-rule Chinese JSON and Markdown reading view from the daily combined JSON. |
 | Windows regression test | `desktop/SELENE.Windows.ContractTests/Program.cs` | Immutable-directory and byte-preservation contract check. |
 | Release tooling | `tools/prepare-release.ps1` | Rebuild, test, package, validate, and checksum release artifacts. |
-| THEIA consumer | `THEIA/src/lib/contextEvents.ts`, `THEIA/src/lib/importer.ts` | Envelope validation, event normalization, deduplication, and model-safe projection. |
+| HYPERION consumer | `HYPERION/src/lib/contextEvents.ts`, `HYPERION/src/lib/importer.ts` | Envelope validation, event normalization, deduplication, and model-safe projection. |
 
 ## 4. End-to-End Data Flow
 
@@ -76,16 +78,20 @@ flowchart LR
   F --> G{"Output target"}
   G --> G1["SAF export directory"]
   G --> G2["Private selene-sync"]
-  G2 --> G3["Syncthing P2P to Windows Inbox"]
-  G1 --> H["THEIA file or directory import"]
-  G3 --> H
+  G2 --> G3["Syncthing P2P to Windows landing"]
+  G3 --> G4["Verified atomic durable Archive"]
+  G4 --> G5["Reverse ACK"]
+  G5 --> G6["Android verifies cleanup after 24h"]
+  G1 --> H["HYPERION file or directory import"]
+  G4 --> H
   H --> I["Envelope validation and normalization"]
   I --> J["Local context-event store"]
   J --> K["Model-safe temporal projection"]
 ```
 
-The arrows intentionally do not point back from THEIA to SELENE. Import is
-one-way. A duplicate file import is harmless only when event IDs are stable.
+Timeline content remains one-way from Android into Windows/HYPERION. The only
+reverse flow is a hash ACK without event content; HYPERION never writes back to
+SELENE. A duplicate file import is harmless only when event IDs are stable.
 
 ## 5. Shared Export Contract
 
@@ -108,16 +114,24 @@ timezone changes. JSON timestamps use the operating system timezone and ISO
   "generatedAt": "2026-08-07T11:20:00.123+08:00",
   "producer": {
     "name": "SELENE",
-    "version": "0.5.2",
+    "version": "0.5.4",
     "layout": "immutable-snapshot-v1"
   },
   "events": []
 }
 ```
 
-THEIA rejects the document unless its schema, `producer.name`, producer layout,
+HYPERION rejects the document unless its schema, `producer.name`, producer layout,
 and event array match this contract. Do not use a generic JSON file as an
 import shortcut.
+
+Windows 0.5.4 additionally writes `Archive/Merged/SELENE-merged-v1-YYYY-MM-DD.json`.
+This is derived data, not a new source of truth: it keeps the same
+`selene-context-events/v1` envelope and `immutable-snapshot-v1` layout, preserves
+every selected source event object, and adds `aggregation.schema: selene-daily-merge/v1`.
+The merge reads both the durable Android archive and the selected Windows export
+root, assigns events by the Windows-local date of `startAt`, and deduplicates by
+stable event ID. A failed scan leaves the previous daily file unchanged.
 
 ### Event fields
 
@@ -125,28 +139,30 @@ import shortcut.
 | --- | --- |
 | `id` | Stable across a retry of the same observation. It is the deduplication key. Do not use a random UUID for ordinary periodic events. |
 | `version` | Event-shape version. Current value is `1`. |
-| `kind` | One of `calendar`, `location`, `movement`, `screen-time`, `activity`, `health`, `payment`, `device`, or `custom`. New kinds require a THEIA change. |
+| `kind` | One of `calendar`, `location`, `movement`, `screen-time`, `activity`, `health`, `payment`, `device`, or `custom`. New kinds require a HYPERION change. |
 | `source` | Current SELENE producers use `selene`. |
 | `startAt`, `endAt` | ISO 8601. `endAt`, if present, must not be before `startAt`. |
 | `title`, `summary` | Short human-readable text. Do not put raw private content here. |
 | `values` | Scalar string, number, or boolean metadata. Preserve documented key names and keep it free of raw text, coordinates, addresses, window titles, and URLs. |
 | `capturedAt` | When SELENE emitted the event. It can differ from `startAt`. |
-| `importedAt` | Normally omitted by SELENE. THEIA supplies actual import time; producers must not claim an import they did not perform. |
+| `importedAt` | Normally omitted by SELENE. HYPERION supplies actual import time; producers must not claim an import they did not perform. |
 | `privacy` | `coarse` for normal context. Only precise `location` events with explicit consent may carry coordinates. |
 
 ### Identity and retry behavior
 
 An immutable snapshot does not mean exactly-once delivery. A collector can be
 retried, a batch can be flushed twice, and a user can import the same directory
-more than once. Stable IDs make those cases idempotent in THEIA.
+more than once. Stable IDs make those cases idempotent in HYPERION.
 
 - Android movement points use the confirmed `trackId` and sequence number.
 - Android movement summaries use the same `trackId`.
-- Windows periodic events include the observed time window and, for activity,
-  a stable hash of the executable name.
+- Windows `screen-time` and activity events describe observed intervals.
+  Device, network, and collection-profile events use a per-capture token and
+  describe the single capture instant, so concurrent same-millisecond captures
+  cannot share an ID.
 
 If an event's identity inputs change, it is a new event. Do not "fix" old
-snapshots; write a new snapshot and let THEIA retain provenance.
+snapshots; write a new snapshot and let HYPERION retain provenance.
 
 ### Storage-size policy
 
@@ -156,7 +172,7 @@ SELENE controls size without lossy downsampling of exported information:
 - Android writes movement batches at 24 events or roughly 120 seconds instead
   of placing the same envelope around every point.
 - Both platforms omit producer-side `importedAt`, which would otherwise repeat
-  information THEIA derives at import.
+  information HYPERION derives at import.
 - Windows serializes one compact envelope per capture and reports its byte
   count to the UI and diagnostic log.
 
@@ -224,21 +240,33 @@ few steps at home from becoming a standalone trip.
 
 ### 6.4 Acceptance and movement thresholds
 
-An input point is rejected before it touches state when it is stale, too far in
-the future, has no usable accuracy, has accuracy above 80 m, is out of time
-order, or implies an implausible jump above 45 m/s after accuracy allowance.
+An input point is rejected before it touches state when it is more than five
+minutes stale, has no usable accuracy, exceeds 80 m accuracy, is out of time
+order, or implies an implausible raw jump above 45 m/s after accuracy
+allowance. A future-dated input is clamped to collection time before that order
+check, rather than being silently lost.
 
-Speed is derived from distance and elapsed time when necessary. When Android
-also reports speed, SELENE averages reported and derived speed only when they
-are within 8 m/s; otherwise it uses the derived value. A reported speed counts
-as independent speed evidence only with location accuracy at most 35 m and,
-when supplied, speed accuracy at most 2.5 m/s.
+`MovementSignalPolicy` maintains an independent anchor for each provider. GPS,
+fused, and network are not interchangeable measurements: a provider handoff
+has zero derived distance and cannot create evidence. For two samples from the
+same provider, it subtracts accuracy overlap from great-circle distance. GPS or
+fused inference requires both samples to be at most 50 m accurate; network
+inference requires both to be at most 25 m accurate. Session-distance anchors
+start fresh when a candidate becomes a confirmed track, making the first
+exported point's distance exactly zero.
+
+Speed is derived only from this resolved same-provider distance and elapsed
+time. When Android also reports speed, SELENE averages reported and derived
+speed only when they are within 8 m/s; otherwise it uses the derived value. A
+reported speed counts as independent speed evidence only from GPS/fused with
+location accuracy at most 35 m and, when supplied, speed accuracy at most
+2.5 m/s.
 
 | Purpose | Threshold |
 | --- | --- |
-| Start evidence | Speed >= 0.8 m/s, or distance >= `max(15 m, 0.75 * combined accuracy)` |
-| Ongoing evidence | Speed >= 0.65 m/s, or distance >= `max(10 m, 0.5 * combined accuracy)` |
-| Stationary evidence | Speed <= 0.4 m/s and distance <= `max(8 m, 0.3 * combined accuracy)` |
+| Start evidence | Trusted GPS/fused speed >= 0.8 m/s, or eligible same-provider resolved distance >= 15 m |
+| Ongoing evidence | Trusted GPS/fused speed >= 0.65 m/s, or eligible same-provider resolved distance >= 10 m |
+| Stationary evidence | Eligible same-provider speed <= 0.4 m/s and resolved distance <= 8 m |
 | Confirmation | 2 start-evidence samples within 90 seconds |
 | Candidate capacity | 4 points |
 | Normal end | 90 seconds of stationary evidence |
@@ -255,7 +283,8 @@ While moving, each accepted point becomes a precise `location` event with:
 
 - `trackId`, `sequence`, `moving: true`;
 - speed in m/s and km/h;
-- distance from the preceding accepted point;
+- resolved distance from the preceding exported point of the same provider;
+  the first point and a provider handoff have zero distance;
 - accuracy, provider, and `sampleMode: "foreground-service"`;
 - coordinates and an explicit `locationConsent` object with
   `captureMode: "foreground"`.
@@ -278,20 +307,21 @@ For a new Android signal:
 2. Check the Android permission, disclosure, and foreground-service policy.
 3. Keep collection locally authorized and avoid raw content by design.
 4. Build a stable event ID and use the v1 envelope fields.
-5. Add the THEIA parser/type/test change before emitting a new `kind`.
+5. Add the HYPERION parser/type/test change before emitting a new `kind`.
 6. Verify on a physical device; emulator location and WorkManager timing are
    insufficient for movement behavior.
 
 For a movement-threshold change, test at least: indoor steps, a 10-20 minute
-walk, a short stop during a walk, stale location delivery, low-accuracy network
-fixes, permission revocation while running, and disabling the feature during a
-confirmed track.
+walk, a short stop during a walk, stale and future-dated location delivery,
+GPS/network handoffs, low-accuracy network fixes, permission revocation while
+running, and disabling the feature during a confirmed track.
 
 ### 6.7 Embedded Syncthing and Android enrollment
 
 `SyncthingPaths` is the single path authority. The executable comes from the
 installed `applicationInfo.nativeLibraryDir`, identity/config lives under
-`noBackupFilesDir/syncthing`, and snapshots live under `filesDir/selene-sync`.
+`noBackupFilesDir/syncthing`, snapshots live under `filesDir/selene-sync`, and
+reverse acknowledgements use `filesDir/selene-sync-acks`.
 Never put a development-machine path, external storage path, or GUI API key in
 code, a QR payload, logs, or events.
 
@@ -316,8 +346,8 @@ states back into a generic timeout or a short toast.
 private XML with Android's pull parser. It rejects document type declarations
 without relying on vendor-specific `DocumentBuilderFactory` feature URIs, then
 caches the key for the client lifetime. Pairing adds Windows, creates or
-validates the Send Only folder, then adds its remote folder member. Never expose
-the REST endpoint to the LAN.
+validates the data Send Only and ACK Receive Only folders, then adds their
+remote folder members. Never expose the REST endpoint to the LAN.
 
 `PairingCode.decode()` keeps fixed schema/folder, device-ID, expiry, 64-hex
 certificate SHA-256, and private/link-local HTTPS `/enroll` checks. Hostnames
@@ -328,6 +358,30 @@ Android configures locally before returning its ID. Paired state is persisted
 only after a 2xx response; token and endpoints are never persisted. Disconnect
 may remove remote config and paired state, but never snapshots or phone identity.
 
+### 6.8 ACK migration and safe Android cleanup
+
+`SyncthingService` owns a housekeeping thread in addition to the core thread.
+After readiness it always calls idempotent `configure()` with the Windows device
+ID already stored in SharedPreferences. An in-place update therefore adds
+`selene-ack-v1` without a new QR field or identity change. It then invokes
+`SnapshotCleanup.clean()` every 15 minutes.
+
+The cleanup trust boundary is a Windows `selene-archive-ack/v1`, not online
+state or Syncthing completion. It parses UTC capture time from the immutable
+directory name, requires at least 24 hours, then compares the ACK to a recursive
+local manifest: exact file set, normalized relative paths, per-file byte count
+and SHA-256, total bytes, and `context-events.json` hash. Any parse failure,
+missing or extra file, symlink, or hash mismatch retains the complete directory.
+Only after full validation is the directory atomically renamed out of the
+Syncthing root into a same-filesystem private cleanup quarantine and recursively
+deleted. A failed quarantine cleanup is retried on the next housekeeping run.
+
+`SnapshotCleanupRuntimeStatus` stores only total deletions, last-run time, and
+the first error, never event content or manifests. A retention or ACK schema
+change extends `SnapshotCleanupTest` for valid old deletion, valid young
+retention, missing ACK, hash mismatch, and malformed ACK. Never add an
+"online plus 100% completion" deletion shortcut.
+
 ## 7. Windows Architecture
 
 ### 7.1 Application lifecycle
@@ -337,13 +391,15 @@ the main window hides it; the tray Exit command performs a real shutdown.
 Collection exists only while this process is alive. Optional startup writes a
 current-user Run entry only for a published executable, never for a debug run.
 
-`MainWindow` runs two independent timers:
+`MainWindow` runs three independent timers:
 
 - every 10 seconds, `ForegroundSessionTracker.Observe()` samples the current
   foreground executable and only the selected optional metadata;
 - at 5, 15, 30, or 60 minute intervals, `DesktopCollector.CaptureAsync()`
   creates a snapshot when automatic collection and a valid output folder are
   enabled.
+- every 10 seconds, `SyncthingPairingService.MaintainAsync()` archives new
+  snapshots and refreshes connection state.
 
 Automatic collection also performs one immediate capture when the application
 initializes with a valid folder.
@@ -382,14 +438,19 @@ but remain represented in the aggregate `screen-time` event.
 | `device` | network availability and coarse transport | A separate network snapshot, also `kind: "device"`. |
 
 `ImmutableSnapshotWriter` probes millisecond suffixes if a directory already
-exists, up to 1,000 attempts. This protects immutable output when two writes
-use the same clock time. JSON is compact and uses the system's local offset;
-directory names remain UTC.
+exists, up to 1,000 attempts. It writes and flushes `context-events.json.tmp`,
+then atomically renames it to `context-events.json`; a failed write removes an
+otherwise empty allocated directory. This protects immutable output when two
+writes use the same clock time and prevents an importer seeing a half-written
+document. JSON is compact and uses the system's local offset; directory names
+remain UTC.
 
-Settings use `%LOCALAPPDATA%\SELENE\desktop-settings.json` and are written via
-a temporary file followed by replace. Diagnostics are in
-`%LOCALAPPDATA%\SELENE\logs\selene-YYYYMMDD.log`. Neither is an exported
-timeline or a THEIA input.
+Settings use `desktop-settings.json` under the SELENE data root and are written
+via a temporary file followed by replace. Set `SELENE_DATA_ROOT` to relocate
+the root; otherwise it falls back to `%LOCALAPPDATA%\SELENE`. The root contains
+`WindowsExport`, `Inbox`, `Archive`, `SyncAcknowledgements`, `logs`, and the
+foreground-session checkpoint. Neither settings nor diagnostics are an
+exported timeline or a HYPERION input.
 
 ### 7.4 Safe Windows changes
 
@@ -404,11 +465,14 @@ without revisiting privacy disclosure, session isolation, and installer design.
 
 ### 7.5 Windows enrollment endpoint
 
-`SyncthingPairingService` belongs to SELENE Windows, not THEIA. It resolves the
+`SyncthingPairingService` belongs to SELENE Windows, not HYPERION. It resolves the
 core through `SELENE_SYNCTHING_PATH`, PATH, and the winget package directory;
 installation occurs only after explicit code generation. It reuses an existing
-`selene-inbox-v1`, enforces Receive Only, and sets user-level
-`THEIA_SELENE_INBOX`. All paths come from runtime APIs.
+`selene-inbox-v1` and enforces Receive Only. It also creates the
+`selene-ack-v1` Send Only directory and a separate durable Archive under
+current-user app data. User-level `HYPERION_SELENE_INBOX` points to Archive, not
+the landing folder that receives Android deletions. All paths come from runtime
+APIs.
 
 `MainWindow` runs pairing preparation and QRCoder encoding on background tasks.
 The service caches the validated Syncthing path, device ID, and the last five
@@ -426,14 +490,32 @@ schema, folder, device-ID, and constant-time token checks does it add Android
 through the local CLI. Success closes it immediately; five-minute cancellation
 is a hard limit.
 
+Every Windows startup performs an idempotent migration: it reads the remote
+members of `selene-inbox-v1` and adds the same members to `selene-ack-v1`. New
+enrollment shares both folders as well, so an old pairing needs no new QR.
+
+`SnapshotArchiveService` accepts only strict snapshot names and
+`selene-context-events/v1` envelopes. It builds an ordered all-file manifest,
+copies into a random Archive-side `.tmp` directory with WriteThrough and
+`Flush(true)`, compares the pre-copy manifest, destination manifest, and
+post-copy source manifest, then atomically publishes with `Directory.Move`.
+An existing same-name Archive must match completely. Invalid JSON, conflicts,
+temporary files, reparse points, and I/O failures produce no ACK. ACK files use
+their own flushed temporary-file rename. Contract tests cover atomic publish,
+idempotency, conflict blocking, and no ACK for invalid JSON.
+
+Live connection status combines `syncthing cli show connections` with the data
+folder member list. The UI distinguishes `isLocal` LAN links from remote/relay
+links, but never treats connectivity or transfer completion as archive proof.
+
 Windows Firewall is external enrollment state and must not be bypassed. Manual
 tests cover Private-network allow, Public-network deny, multi-adapter fallback,
 expiry, wrong token, duplicates, an existing folder path, and completion while
 the main window is hidden.
 
-## 8. THEIA Import and Privacy Boundary
+## 8. HYPERION Import and Privacy Boundary
 
-THEIA owns validation and import semantics. SELENE must not assume a file is
+HYPERION owns validation and import semantics. SELENE must not assume a file is
 accepted merely because it is valid JSON.
 
 ```mermaid
@@ -446,7 +528,7 @@ flowchart TD
   E --> F["Project only safe temporal context to model"]
 ```
 
-`THEIA/src/lib/contextEvents.ts` applies the following rules:
+`HYPERION/src/lib/contextEvents.ts` applies the following rules:
 
 - unknown `kind` values become `custom`; unknown sources are rejected;
 - invalid ISO dates, invalid end ordering, and malformed envelope metadata are
@@ -458,9 +540,9 @@ flowchart TD
   information. For location it exposes only a coarse location title and an
   optional `placeTag`.
 
-The `movement` summary is intentionally a separate kind. It reaches THEIA as
+The `movement` summary is intentionally a separate kind. It reaches HYPERION as
 `movement`, rather than being silently downgraded to `custom`. Any new SELENE
-kind must be added to THEIA's `ContextEventKind`, accepted-kind set, docs, and
+kind must be added to HYPERION's `ContextEventKind`, accepted-kind set, docs, and
 tests before release.
 
 ## 9. Build, Test, and Manual Verification
@@ -472,7 +554,7 @@ Run commands from the SELENE repository root.
 ```powershell
 $env:JAVA_HOME = '<JDK_17_HOME>'
 $env:ANDROID_HOME = '<ANDROID_SDK_HOME>'
-gradle --no-daemon :app:lintDebug :app:assembleDebug
+gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
 The APK is `app\build\outputs\apk\debug\app-debug.apk`. Address new lint
@@ -486,18 +568,19 @@ dotnet build desktop\SELENE.Windows\SELENE.Windows.csproj -c Release
 dotnet run --project desktop\SELENE.Windows.ContractTests\SELENE.Windows.ContractTests.csproj -c Release
 ```
 
-The contract test writes two snapshots at the same supplied timestamp, verifies
-different directory names, and checks that the first JSON remains unchanged.
+The contract test covers immutable snapshots, atomic durable archive, ACK
+idempotency and conflict blocking, existing-device ACK migration, and
+online/offline plus LAN/remote connection summaries.
 
-### THEIA compatibility
+### HYPERION compatibility
 
-Run this in the THEIA repository after changing the common contract:
+Run this in the HYPERION repository after changing the common contract:
 
 ```powershell
 npm run test:context-events
 ```
 
-Also import a real exported parent directory in THEIA. Confirm the movement
+Also import a real exported parent directory in HYPERION. Confirm the movement
 summary remains `movement`, duplicate import does not increase event count, and
 coordinates are absent from the model-facing context.
 
@@ -524,7 +607,7 @@ Before merging a behavioral change, answer all of these:
 4. Which fields are source time, capture time, and import time?
 5. Could any text, coordinate, address, title, URL, or credential cross the
    export or model boundary?
-6. Does THEIA already understand the kind and all required metadata?
+6. Does HYPERION already understand the kind and all required metadata?
 7. What happens on permission revocation, process death, a full disk, or a
    failed SAF write?
 8. Which automated and physical-device tests prove the expected behavior?
@@ -537,7 +620,7 @@ $env:JAVA_HOME = '<jdk-home>'
 ```
 
 The script refuses to overwrite an existing `releases\v<version>` staging
-directory. It runs Android lint/build, Windows build and contract test,
+directory. It runs Android unit tests/lint/build, Windows build and contract test,
 self-contained Windows publish, APK manifest/alignment/signature verification,
 ZIP inventory checking, and SHA-256 generation. Follow
 [RELEASE_PROCESS.md](RELEASE_PROCESS.md) for the tag, GitHub attachment, and
@@ -551,5 +634,5 @@ downloaded-asset checksum steps. The Android artifact is intentionally named
 - [Windows collector details](WINDOWS_DESKTOP.md)
 - [Export layout](EXPORT_LAYOUT.md)
 - [Release process](RELEASE_PROCESS.md)
-- [THEIA event contract](https://github.com/bakahuiii/THEIA/blob/main/docs/SELENE_EVENTS.md)
-- [THEIA importer source](https://github.com/bakahuiii/THEIA/blob/main/src/lib/contextEvents.ts)
+- [HYPERION event contract](https://github.com/bakahuiii/HYPERION/blob/main/docs/SELENE_EVENTS.md)
+- [HYPERION importer source](https://github.com/bakahuiii/HYPERION/blob/main/src/lib/contextEvents.ts)

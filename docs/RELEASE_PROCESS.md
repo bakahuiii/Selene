@@ -26,7 +26,7 @@ From the repository root, run:
 
 ~~~powershell
 $env:JAVA_HOME = '<jdk-home>'
-.\tools\prepare-release.ps1 -Version 0.5.2
+.\tools\prepare-release.ps1 -Version 0.5.4
 ~~~
 
 Pass `-Version` explicitly. The command refuses to reuse its matching
@@ -34,23 +34,25 @@ Pass `-Version` explicitly. The command refuses to reuse its matching
 staging directory from accidental overwrite. It performs the following checks:
 
 1. Native Syncthing size and SHA-256 verification against the provenance manifest.
-2. Android debug lint and APK build.
+2. Android unit tests, debug lint, and APK build.
 3. Windows Release build.
 4. Windows immutable-snapshot contract test.
 5. Windows self-contained, single-file x64 publish.
 6. Android manifest, ZIP alignment, and signature validation.
-7. Windows ZIP inventory validation.
+7. Windows Release disables debug symbols and uses a stable `PathMap`; exact ZIP
+   inventory allows only the single-file EXE and third-party notice. This avoids
+   build-path disclosure and reduces size.
 8. SHA-256 checksum generation.
 
 Artifacts are placed here:
 
 ```text
 releases/
-  v0.5.2/
+  v0.5.4/
     published/windows-x64/       # unpacked self-contained Windows output
     artifacts/
-      SELENE-0.5.2-windows-x64.zip
-      SELENE-0.5.2-android-debug.apk
+      SELENE-0.5.4-windows-x64.zip
+      SELENE-0.5.4-android-debug.apk
       SHA256SUMS.txt
 ```
 
@@ -76,7 +78,9 @@ repository. Its name states that fact explicitly.
    visible but does not grant location access.
 8. State the two supported ARM ABIs and the pinned Syncthing-Fork/Syncthing
    revisions, including the MPL-2.0 source offer in `THIRD_PARTY_NOTICES.md`.
+9. State that in-place updates retain pairing and Android removes a phone copy
+   only after a full matching durable-archive ACK and 24-hour retention.
 
 Use the release notes to identify the supported schema
-`selene-context-events/v1`, so users know that THEIA imports only SELENE's
+`selene-context-events/v1`, so users know that HYPERION imports only SELENE's
 strict immutable snapshot envelope.

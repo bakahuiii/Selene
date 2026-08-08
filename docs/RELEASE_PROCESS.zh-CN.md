@@ -19,29 +19,30 @@
 
 ```powershell
 $env:JAVA_HOME = '<jdk-home>'
-.\tools\prepare-release.ps1 -Version 0.5.2
+.\tools\prepare-release.ps1 -Version 0.5.4
 ```
 
 请显式传入 `-Version`。脚本拒绝重复使用对应的 `releases\v<version>` 目录，避免意外覆盖此前的本地发布暂存目录。它会依次执行：
 
 1. 按 provenance manifest 校验 Syncthing 原生文件大小与 SHA-256。
-2. Android debug lint 与 APK 构建。
+2. Android 单元测试、debug lint 与 APK 构建。
 3. Windows Release 构建。
 4. Windows 不可变快照契约测试。
 5. Windows x64 单文件自包含发布。
 6. Android 清单、ZIP 对齐和签名校验。
-7. Windows ZIP 内容校验。
+7. Windows Release 关闭调试符号并使用稳定 `PathMap`；ZIP 精确清单只允许单文件 EXE
+   和第三方声明，避免泄漏构建机源码路径并减少体积。
 8. SHA-256 校验和生成。
 
 产物目录如下：
 
 ```text
 releases/
-  v0.5.2/
+  v0.5.4/
     published/windows-x64/
     artifacts/
-      SELENE-0.5.2-windows-x64.zip
-      SELENE-0.5.2-android-debug.apk
+      SELENE-0.5.4-windows-x64.zip
+      SELENE-0.5.4-android-debug.apk
       SHA256SUMS.txt
 ```
 
@@ -58,5 +59,7 @@ releases/
 7. Android 包含运动记录时，说明用户必须选择精确位置并设置为“始终允许”，系统才会采集已确认行程。通知权限只负责显示前台服务状态，不授予位置权限。
 8. 说明 Android 只支持两个 ARM ABI，内置核心来源于固定 Syncthing-Fork/Syncthing
    提交，并附上 `THIRD_PARTY_NOTICES.md` 中的 MPL-2.0 源码获取信息。
+9. 说明覆盖更新会保留配对；Android 仅在 Windows 持久归档 ACK 全量匹配且快照超过
+   24 小时时清理手机副本。
 
-发布说明还应写明支持的 `selene-context-events/v1` schema，使用户知道 THEIA 只导入 SELENE 的严格不可变快照信封。
+发布说明还应写明支持的 `selene-context-events/v1` schema，使用户知道 HYPERION 只导入 SELENE 的严格不可变快照信封。

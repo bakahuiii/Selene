@@ -24,14 +24,14 @@ The content file conforms to `selene-context-events/v1`:
   "generatedAt": "2026-08-06T18:54:39.123Z",
   "producer": {
     "name": "SELENE",
-    "version": "0.5.2",
+    "version": "0.5.4",
     "layout": "immutable-snapshot-v1"
   },
   "events": []
 }
 ```
 
-`producer` is required metadata. THEIA uses it to reject non-SELENE JSON before
+`producer` is required metadata. HYPERION uses it to reject non-SELENE JSON before
 it enters the timeline import path.
 
 ## Write Semantics
@@ -47,13 +47,13 @@ successful run creates another independent snapshot rather than repairing the
 old one.
 
 JSON is compact UTF-8 without indentation. Android omits `importedAt` because
-THEIA records the actual import time and otherwise derives it from the snapshot
+HYPERION records the actual import time and otherwise derives it from the snapshot
 generation time. This removes a duplicated producer-side timestamp without
 changing event timing information.
 
 ## Import Semantics
 
-Import the parent directory. THEIA scans JSON files recursively, retains their
+Import the parent directory. HYPERION scans JSON files recursively, retains their
 relative path as provenance, and deduplicates events by stable event ID. This
 allows an hourly run to overlap an earlier time window without turning the
 export directory into a mutable database.
@@ -70,9 +70,11 @@ selene-context-events/v1 schema.
 When Android automatic collection and background location are enabled, SELENE
 uses a foreground location service for movement rather than relying on an
 hourly WorkManager run. A movement is confirmed only after two nearby location
-samples independently show sustained travel. Short indoor steps, a lone noisy
-fix, stale last-known locations, poor-accuracy fixes, and implausible jumps are
-not exported as movement.
+samples independently show sustained travel. GPS/fused and network positions
+have separate anchors, and same-provider distance excludes accuracy overlap;
+a provider handoff therefore contributes zero route distance. Short indoor
+steps, a lone noisy fix, stale last-known locations, poor-accuracy fixes, and
+implausible jumps are not exported as movement.
 
 Confirmed tracks emit precise `location` events with `values.moving: true`, a
 stable `trackId`, sampled speed in metres per second and kilometres per hour,
@@ -80,7 +82,8 @@ distance since the preceding point, accuracy, and provider. When a track ends,
 SELENE emits one `movement` summary with duration, distance, average and
 maximum speed, and sample count. A short pre-confirmation buffer is exported
 with a confirmed track so the start of a walk is retained without recording a
-couple of steps at home as a separate trip.
+couple of steps at home as a separate trip. The first exported point always has
+`distanceFromPreviousMeters: 0`.
 
 ```json
 {

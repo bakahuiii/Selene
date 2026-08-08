@@ -14,7 +14,7 @@ SELENE Windows 是一个原生 WPF 托盘程序，在当前 Windows 用户会话
 
 ## 第一次使用
 
-1. 将 SELENE-0.5.2-windows-x64.zip 解压到普通用户目录。
+1. 将 SELENE-0.5.4-windows-x64.zip 解压到普通用户目录。
 2. 启动 SELENE.Windows.exe。
 3. 选择一个导出父目录。它可以和 Android SELENE 使用同一个父目录，
    两个平台会分别创建自己的不可变快照。
@@ -35,13 +35,17 @@ SELENE Windows 是一个原生 WPF 托盘程序，在当前 Windows 用户会话
 3. 在同一可信局域网中用 Android SELENE 扫描，或复制文本配对码。
 
 配对准备、临时证书和二维码编码均在后台执行，不阻塞窗口。SELENE 会缓存当前进程中
-已验证的 Syncthing 路径、收件箱和设备 ID。`THEIA_SELENE_INBOX` 仅在值实际变化时
+已验证的 Syncthing 路径、收件箱和设备 ID。`HYPERION_SELENE_INBOX` 仅在值实际变化时
 写入；首次写入采用直接注册表更新和限时后台系统通知，避免某个无响应窗口把二维码
 生成拖慢十几秒。
-4. 手机回传设备 ID 后，Windows 自动批准设备并共享 `selene-inbox-v1`。
+4. 手机回传设备 ID 后，Windows 自动批准设备并共享数据 `selene-inbox-v1` 与反向确认
+   `selene-ack-v1`。
 
-SELENE 会设置当前用户的 `THEIA_SELENE_INBOX`；首次完成后重启 THEIA。后续跨网络
-同步不需要再次扫码。完整协议、安全边界和排错见 [P2P_SYNC.zh-CN.md](P2P_SYNC.zh-CN.md)。
+SELENE 每 10 秒显示已配对/已连接设备数和局域网或远程链路。收到完整快照后，它会先
+逐文件校验并原子复制到独立持久 Archive，再生成 ACK；`HYPERION_SELENE_INBOX` 指向该
+Archive。Android 只有收到匹配 ACK 且快照超过一天才删除手机副本。首次完成后重启
+HYPERION；后续跨网络同步和覆盖更新都不需要再次扫码。完整协议、安全边界和排错见
+[P2P_SYNC.zh-CN.md](P2P_SYNC.zh-CN.md)。
 
 ## 采集内容与选择
 
@@ -57,6 +61,10 @@ context-events.json。默认记录：
 “采集范围与隐私边界”提供逐项开关。默认只写上述低敏元数据；用户明确开启后，
 还可写入前台窗口标题、可执行文件完整路径和当前前台浏览器的 URL。每个快照均
 包含 `collection-profile` 事件，明确标注本次写入时开启了哪些字段。
+
+前台活动是已观察到的时间区间。设备状态、网络状态和采集配置都是采集瞬间的点状样本：
+它们的 `startAt` 与 `endAt` 均为该瞬间，绝不会跨 SELENE 重启伪造未观察到的区间。
+每次采集都会分配新的事件 ID，即使两次采集恰好落在系统时钟的同一毫秒内也不会重复。
 
 事件时间戳使用 Windows 系统时区和 ISO 8601 偏移，例如
 `2026-08-06T22:54:39.123+08:00`；快照目录名仍使用 UTC 以保证稳定排序。JSON
@@ -90,8 +98,8 @@ Android 的后台持续运动记录使用独立的权限和前台服务边界，
 ~~~
 
 原始时间线只写入用户选定的导出目录。SELENE 不扫描该目录，不合并旧事件，
-不重写已有 JSON，也不删除旧快照。写入中断时会留下不完整快照供检查，
-下一次成功采集会创建新的文件夹。
+不重写已有 JSON，也不删除旧快照。JSON 会先写成已落盘的临时文件，只有完整后才原子改名，
+导入器不会看到半写入文档；若程序在改名前被强制结束，临时文件会被刻意排除在不可变快照之外。
 
 尚未写入快照的前台会话会保存在当前用户的 `%LOCALAPPDATA%\SELENE` 待导出
 文件中；成功写入并落盘后才会确认删除。突然退出、断电或 Windows 强制结束进程
@@ -105,14 +113,14 @@ Android 的后台持续运动记录使用独立的权限和前台服务边界，
   "device": { "platform": "windows" },
   "producer": {
     "name": "SELENE",
-    "version": "0.5.2",
+    "version": "0.5.4",
     "layout": "immutable-snapshot-v1"
   },
   "events": []
 }
 ~~~
 
-THEIA 接收的是粗粒度模型投影。其他 SELENE 平台本地可能存在的精确坐标、
+HYPERION 接收的是粗粒度模型投影。其他 SELENE 平台本地可能存在的精确坐标、
 地址类字段不会发送给模型。
 
 ## 排查
@@ -129,7 +137,7 @@ THEIA 接收的是粗粒度模型投影。其他 SELENE 平台本地可能存在
 ~~~powershell
 dotnet build desktop\SELENE.Windows\SELENE.Windows.csproj -c Release
 dotnet run --project desktop\SELENE.Windows.ContractTests\SELENE.Windows.ContractTests.csproj -c Release
-dotnet publish desktop\SELENE.Windows\SELENE.Windows.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o releases\SELENE-0.5.2-windows-x64
+dotnet publish desktop\SELENE.Windows\SELENE.Windows.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o releases\SELENE-0.5.4-windows-x64
 ~~~
 
 契约测试会使用同一个时间戳写入两次快照，确认目录不同，并确认第一次

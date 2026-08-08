@@ -16,7 +16,7 @@ collection boundary visible and controllable to the user.
 
 ## First Run
 
-1. Extract the SELENE-0.5.2-windows-x64.zip archive to a normal user folder.
+1. Extract the SELENE-0.5.4-windows-x64.zip archive to a normal user folder.
 2. Run SELENE.Windows.exe.
 3. Choose a parent export folder. This can be the same folder used by Android
    SELENE, although each platform writes its own immutable snapshot directories.
@@ -41,15 +41,19 @@ is not needed:
 
 Pairing preparation, temporary-certificate creation, and QR encoding run off
 the UI thread. SELENE caches the validated Syncthing path, inbox, and device ID
-for the current process. It writes `THEIA_SELENE_INBOX` only when the value has
+for the current process. It writes `HYPERION_SELENE_INBOX` only when the value has
 actually changed; the first write uses a direct registry update and a bounded
 background system notification so an unresponsive window cannot stall QR
 generation for many seconds.
-4. After the phone returns its device ID, Windows approves it and shares
-   `selene-inbox-v1` automatically.
+4. After the phone returns its device ID, Windows approves it and shares data
+   `selene-inbox-v1` plus reverse acknowledgement `selene-ack-v1`.
 
-SELENE sets the current-user `THEIA_SELENE_INBOX`; restart THEIA once after
-initial enrollment. Later cross-network sync needs no second scan. See
+Every ten seconds SELENE reports paired/connected device counts and LAN versus
+remote routes. A complete snapshot is verified file by file and atomically
+copied into a separate durable Archive before an ACK is emitted;
+`HYPERION_SELENE_INBOX` points to that Archive. Android deletes a phone copy only
+after a matching ACK and one day of retention. Restart HYPERION once after initial
+enrollment. Cross-network sync and in-place updates need no second scan. See
 [P2P_SYNC.md](P2P_SYNC.md) for protocol, security, and troubleshooting.
 
 ## Collected Signals and Choices
@@ -68,6 +72,12 @@ The “Collection scope and privacy boundary” panel exposes an explicit switch
 for each field group. Window titles, executable paths, and the current
 foreground browser URL are off by default. Every snapshot includes a
 `collection-profile` event listing the selections used for that snapshot.
+
+Foreground activity is an observed interval. Device state, network state, and
+the collection profile are point-in-time samples: their `startAt` and `endAt`
+are the capture instant, so they never claim an unobserved interval across an
+application restart. Every capture allocates new event IDs, including two
+captures that happen within the same system clock millisecond.
 
 Event timestamps use the Windows system timezone and ISO 8601 offset, such as
 `2026-08-06T22:54:39.123+08:00`. Snapshot directory names remain UTC for stable
@@ -108,9 +118,11 @@ Diagnostics contain event names, timestamps, and error messages only:
 
 The raw timeline is written only to the export folder chosen by the user.
 SELENE never scans that folder before writing, never merges old events, never
-rewrites an existing JSON file, and never deletes an old snapshot. If a write
-is interrupted, the incomplete snapshot is left for inspection and a later
-run creates a new directory.
+rewrites an existing JSON file, and never deletes an old snapshot. The JSON is
+written as a flushed temporary file and atomically renamed only when complete,
+so an importer does not observe a half-written document. If the application is
+forcibly terminated before that rename, the temporary file is deliberately not
+treated as an immutable snapshot.
 
 Unwritten foreground sessions are checkpointed under `%LOCALAPPDATA%\SELENE`
 and acknowledged only after a snapshot has been flushed. A sudden process
@@ -125,14 +137,14 @@ The snapshot uses:
   "device": { "platform": "windows" },
   "producer": {
     "name": "SELENE",
-    "version": "0.5.2",
+    "version": "0.5.4",
     "layout": "immutable-snapshot-v1"
   },
   "events": []
 }
 ~~~
 
-THEIA receives only the coarse model projection. Exact coordinates and
+HYPERION receives only the coarse model projection. Exact coordinates and
 address-like fields, when present in another SELENE platform's local data,
 are not sent to the model.
 
@@ -152,7 +164,7 @@ is stored under the current user's Run key and does not affect other users.
 ~~~powershell
 dotnet build desktop\SELENE.Windows\SELENE.Windows.csproj -c Release
 dotnet run --project desktop\SELENE.Windows.ContractTests\SELENE.Windows.ContractTests.csproj -c Release
-dotnet publish desktop\SELENE.Windows\SELENE.Windows.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o releases\SELENE-0.5.2-windows-x64
+dotnet publish desktop\SELENE.Windows\SELENE.Windows.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o releases\SELENE-0.5.4-windows-x64
 ~~~
 
 The contract test writes two snapshots using the same timestamp and asserts

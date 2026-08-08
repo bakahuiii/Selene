@@ -2,13 +2,13 @@
 
 ## Scope
 
-Android SELENE 0.5.2 records local, non-text timeline context. Its optional movement collector records confirmed continuous travel, sampled precise coordinates, approximate speed, and distance. It covers a walk that begins and ends between hourly WorkManager runs.
+Android SELENE 0.5.4 records local, non-text timeline context. Its optional movement collector records confirmed continuous travel, sampled precise coordinates, approximate speed, and distance. It covers a walk that begins and ends between hourly WorkManager runs.
 
 Before pairing, data stays in the Android document-tree export folder selected by the user. After Windows P2P pairing, it is written to private app storage and sent end-to-end by the embedded Syncthing core. SELENE does not inspect chat databases, read notification text, record calls or SMS, capture screenshots, read keyboard input, or access other applications' private databases.
 
 ## Enable Tracking
 
-1. Install SELENE 0.5.2 or newer and open it once.
+1. Install SELENE 0.5.4 or newer and open it once.
 2. Scan the Windows one-use pairing code, or select an export parent with Android's system folder picker.
 3. Enable **Automatic local collection**.
 4. Enable **Allow background continuous movement tracking and approximate speed**.
@@ -21,11 +21,11 @@ The service runs only while automatic collection, background location, export-fo
 
 SELENE uses GPS and network providers from a foreground service. It requests updates at most every 15 seconds and after at least 8 metres of provider-reported travel. Android or device power policies can still batch, delay, or suppress updates.
 
-An accepted point must be at most five minutes old, at most two minutes in the future, and accurate to 80 metres or better. Jumps above 45 m/s are dropped. Two independent movement samples within 90 seconds are required before SELENE exports a track.
+An accepted point must be at most five minutes old and accurate to 80 metres or better. A future-dated point is timestamped at collection time instead of being discarded. Jumps above 45 m/s are dropped. Two independent movement samples within 90 seconds are required before SELENE exports a track.
 
-The start threshold is 0.8 m/s or 15 metres, raised to 75% of combined position accuracy when larger. During a confirmed track it is 0.65 m/s or 10 metres, raised to 50% of combined accuracy. A speed reading is standalone evidence only with position accuracy at or below 35 metres and, when Android supplies it, speed accuracy at or below 2.5 m/s.
+GPS/fused and network positions use separate anchors: changing provider never creates a travelled distance. For consecutive samples from the same provider, SELENE subtracts the accuracy overlap before using distance for evidence or route length. GPS/fused needs both samples within 50 metres accuracy; network-derived evidence is allowed only within 25 metres. The start threshold is 0.8 m/s or 15 resolved metres. During a confirmed track it is 0.65 m/s or 10 resolved metres. A speed reading is standalone evidence only from GPS/fused with position accuracy at or below 35 metres and, when Android supplies it, speed accuracy at or below 2.5 m/s.
 
-This hysteresis rejects a few indoor steps, one-off GPS drift, poor network positioning, stale last-known locations, and implausible jumps. Candidate points are buffered and exported only after confirmation, retaining the start of a real walk without creating a false trip at home.
+This hysteresis rejects a few indoor steps, one-off GPS drift, provider handoffs, poor network positioning, stale last-known locations, and implausible jumps. Candidate points are buffered and exported only after confirmation. The first exported point has zero route distance, so a pre-confirmation anchor never inflates the trip.
 
 A confirmed track ends after about 90 seconds of stationary evidence or 150 seconds without movement evidence. A 30-second watchdog closes it at the last accepted point if Android stops supplying locations, so an unknown idle gap does not inflate duration.
 
@@ -33,7 +33,7 @@ A confirmed track ends after about 90 seconds of stationary evidence or 150 seco
 
 Confirmed points are precise `location` events with `values.moving: true`, a shared `trackId`, sequence, `speedMps`, `speedKmh`, distance from the previous point, accuracy, provider, and coordinates. Each completed track adds a `movement` summary with duration, distance, average and maximum speed, and sample count.
 
-Point batches are written every 24 events or about two minutes, and again at track completion. The larger batch reduces repeated immutable-snapshot envelope metadata without dropping any points. Android omits producer-side `importedAt` because THEIA records actual import time; `capturedAt` and source point time remain intact.
+Point batches are written every 24 events or about two minutes, and again at track completion. The larger batch reduces repeated immutable-snapshot envelope metadata without dropping any points. Android omits producer-side `importedAt` because HYPERION records actual import time; `capturedAt` and source point time remain intact.
 
 JSON event times use the Android system timezone and ISO 8601 offset, for example `2026-08-06T22:54:39.123+08:00`. Snapshot directory names deliberately remain UTC (`SELENE-v1-...Z`) so naming and ordering are stable across timezone changes.
 

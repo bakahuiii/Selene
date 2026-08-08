@@ -19,14 +19,14 @@ SELENE-v1-<UTC timestamp>/context-events.json
   "generatedAt": "2026-08-06T22:54:39.123+08:00",
   "producer": {
     "name": "SELENE",
-    "version": "0.5.2",
+    "version": "0.5.4",
     "layout": "immutable-snapshot-v1"
   },
   "events": []
 }
 ```
 
-`producer` 是必填元数据。THEIA 会在进入时间线导入流程前用它拒绝非 SELENE JSON。
+`producer` 是必填元数据。HYPERION 会在进入时间线导入流程前用它拒绝非 SELENE JSON。
 
 ## 写入与导入语义
 
@@ -37,17 +37,17 @@ SELENE-v1-<UTC timestamp>/context-events.json
 
 中断写入可能留下不完整快照。导入器应拒绝无法解析的 JSON，但保留目录供检查；之后成功采集会创建新的独立快照，不会修复旧目录。Android 的 Worker 和前台运动服务会在进程内串行写入，避免同时写入同一导出文件。
 
-请选择父目录。THEIA 会递归扫描 JSON，保留相对路径作为来源，并按稳定事件 ID 去重。因此每小时快照与运动服务快照可以重叠，而导出目录不需要可变数据库。SELENE 不读取、迁移、修改或删除自己快照目录之外的文件。
+请选择父目录。HYPERION 会递归扫描 JSON，保留相对路径作为来源，并按稳定事件 ID 去重。因此每小时快照与运动服务快照可以重叠，而导出目录不需要可变数据库。SELENE 不读取、迁移、修改或删除自己快照目录之外的文件。
 
-JSON 使用无缩进的紧凑 UTF-8。Android 不输出与 `capturedAt` 重复的生产端 `importedAt`；THEIA 会记录实际导入时间，并在需要时从快照生成时间派生导入时间，因此不改变事件时间信息。
+JSON 使用无缩进的紧凑 UTF-8。Android 不输出与 `capturedAt` 重复的生产端 `importedAt`；HYPERION 会记录实际导入时间，并在需要时从快照生成时间派生导入时间，因此不改变事件时间信息。
 
 `device.platform` 在 Android 采集器中为 `android`，在 Windows 采集器中为 `windows`；两个平台使用同一 `selene-context-events/v1` 信封。
 
 ## Android 运动事件
 
-当 Android 自动采集和后台位置同时开启时，SELENE 使用前台位置服务记录运动，而不再依赖每小时 WorkManager。只有相邻样本独立显示持续移动后才确认行程；短暂室内步行、单个噪声点、陈旧最后已知位置、低精度点和不合理跳点不会导出为运动。
+当 Android 自动采集和后台位置同时开启时，SELENE 使用前台位置服务记录运动，而不再依赖每小时 WorkManager。只有相邻样本独立显示持续移动后才确认行程；GPS/fused 与 network 使用独立锚点，同一提供方距离会扣除精度重叠范围，切换提供方的路线距离恒为零；短暂室内步行、单个噪声点、陈旧最后已知位置、低精度点和不合理跳点不会导出为运动。
 
-确认行程的轨迹点为精确 `location` 事件，`values.moving` 为 `true`，包含稳定 `trackId`、速度（m/s 和 km/h）、与前一点距离、精度和提供方。行程结束时会写入一个 `movement` 汇总事件，其中包含时长、距离、平均与最高速度和样本数。确认前缓冲会随已确认行程写出，以保留真实散步起点而不把家里几步当成行程。
+确认行程的轨迹点为精确 `location` 事件，`values.moving` 为 `true`，包含稳定 `trackId`、速度（m/s 和 km/h）、与前一点距离、精度和提供方。行程结束时会写入一个 `movement` 汇总事件，其中包含时长、距离、平均与最高速度和样本数。确认前缓冲会随已确认行程写出，以保留真实散步起点而不把家里几步当成行程；第一个导出点的 `distanceFromPreviousMeters` 恒为 `0`。
 
 ```json
 {

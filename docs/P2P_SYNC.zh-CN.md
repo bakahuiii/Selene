@@ -2,123 +2,148 @@
 
 [English](P2P_SYNC.md) | [简体中文](P2P_SYNC.zh-CN.md)
 
-SELENE 0.5.2 在 Android 应用内部运行 Syncthing 原生核心。用户只需在 Windows
-SELENE 生成一次性二维码，然后用手机扫描一次；之后手机会在有网络时自动把不可变
-快照同步到 Windows。首次 enrollment 需要两台设备在同一局域网，后续同步不要求
-同一 Wi-Fi，也不需要自建服务器。
+SELENE 0.5.4 在 Android 应用内运行 Syncthing 原生核心。首次在可信局域网扫描一次
+Windows SELENE 生成的短期二维码后，后续同步可走局域网、互联网直连或 Syncthing
+中继，不要求同一 Wi-Fi，也不需要自建服务器。覆盖安装 Android APK 或替换 Windows
+程序不会改变双方的 Syncthing 身份和配对关系。
 
 ## 用户操作
 
 ### Windows
 
-1. 打开 SELENE Windows，进入“Android 一次配对同步”。
-2. 确认“收件箱”目录。SELENE 默认使用当前用户的应用数据目录；如果 Syncthing
-   已有 `selene-inbox-v1`，SELENE 会复用它的现有路径。
-3. 建议开启“登录 Windows 后启动 SELENE”，这样每次登录后同步端都会自动恢复。
-4. 点击“生成一次性配对二维码”。如果没有 Syncthing，SELENE 会通过 winget 安装
-   官方 `Syncthing.Syncthing` 包。
-5. Windows 防火墙首次询问时，只允许“专用网络”。配对监听器只运行 5 分钟。
+1. 打开 SELENE Windows 的“Android 一次配对同步”。
+2. 确认同步落地点。若 Syncthing 已有 `selene-inbox-v1`，SELENE 会复用其实际路径。
+3. 建议开启“登录 Windows 后启动 SELENE”，保证归档和 ACK 持续运行。
+4. 点击“生成一次性配对二维码”。缺少 Syncthing 时，此明确操作会通过 winget 安装
+   官方 `Syncthing.Syncthing`。
+5. Windows 防火墙首次询问时只允许专用网络。enrollment 监听器五分钟后关闭。
 
 ### Android
 
-1. 安装 SELENE 0.5.2，在系统权限流程中授予你要启用的采集权限。
-2. 让手机和 Windows 暂时连接同一个家庭/可信局域网。
-3. 在“远程同步”中点击“扫描 Windows 配对二维码”；没有相机时可点击“输入
-   Windows 配对码”并粘贴 Windows 复制出的代码。
-4. 等待两端显示“配对成功”。SELENE 会自动开启周期采集，不再要求选择 SAF 导出
-   文件夹。持续移动仍需要精确位置、后台位置和相应开关。
-5. 第一次配对后重启 THEIA，使它继承 Windows 用户环境变量
-   `THEIA_SELENE_INBOX`。以后不需要再扫码。
+1. 安装 SELENE 0.5.4，授予实际要使用的采集权限。
+2. 首次配对时让手机与 Windows 暂时进入同一可信局域网。
+3. 扫描 Windows 二维码，或手动粘贴 `selene-pair:v1:...` 配对码。
+4. 两端显示成功后即可离开该网络。以后不再扫码。
+5. 首次设置 `HYPERION_SELENE_INBOX` 后重启一次 HYPERION；后续 SELENE 更新不需要重启
+   配对流程。
 
-## 数据流
+## 数据流与删除安全
 
 ```mermaid
 flowchart LR
-  A["Android 采集器"] --> B["应用私有 selene-sync"]
-  B --> C["内置 Syncthing Send Only"]
-  C -->|"TLS + 设备证书；发现/NAT/中继"| D["Windows Syncthing Receive Only"]
-  D --> E["SELENE Inbox"]
-  E --> F["THEIA 收件箱监听器"]
+  A["Android 采集器"] --> B["私有 selene-sync"]
+  B --> C["selene-inbox-v1 / Send Only"]
+  C -->|"设备 TLS；发现/NAT/中继"| D["Windows 同步落地点 / Receive Only"]
+  D --> E["Windows 原子校验归档"]
+  E --> F["持久 Archive / HYPERION 输入"]
+  E --> G["selene-ack-v1 / Send Only"]
+  G --> H["Android ACK / Receive Only"]
+  H --> I{"快照超过 24 小时且全部哈希匹配？"}
+  I -->|是| J["删除 Android 本地快照"]
+  I -->|否| K["保留并等待"]
 ```
 
-Android 仍然先本地落盘。网络中断、Windows 关机或手机离线时，已经生成的快照保留
-在手机应用私有目录；连接恢复后 Syncthing 会补传。Windows 端目录固定为 Receive
-Only，手机端固定为 Send Only，防止 Windows 文件反向覆盖采集端。
+不能依据“Syncthing 完成度 100%”直接删除手机文件：Send Only 端的删除仍会同步到
+Windows Receive Only 落地点，从而把唯一 Windows 副本也删掉。SELENE 因此使用独立的
+持久归档和反向确认：
 
-## 一次性配对协议
+- `selene-inbox-v1`：Android Send Only，Windows Receive Only，只是同步落地点；
+- Windows `Archive`：位于 Windows 用户应用数据目录，不属于任何 Syncthing 文件夹；
+- `selene-ack-v1`：Windows Send Only，Android Receive Only，只传很小的确认 JSON；
+- `HYPERION_SELENE_INBOX` 指向持久归档，而不是会跟随手机删除的同步落地点。
 
-二维码不是普通 Syncthing 设备 ID。普通设备 ID 只能让手机信任 Windows，Windows
-仍会等待人工批准手机，因此无法“一次扫描完成”。SELENE 使用
-`selene-pair/v1` enrollment：
+Windows 只处理名称符合 `SELENE-v1-<UTC 时间戳>` 的目录。它解析
+`context-events.json`、拒绝损坏 schema/临时文件/越界链接，为目录中每个文件计算
+SHA-256，复制到归档临时目录并强制落盘，再次核对源和副本清单，最后用目录原子改名
+发布。已有同名归档只有在完整清单一致时才视为幂等成功；冲突时不会发 ACK。
 
-1. Windows 创建 256 位随机令牌、10 分钟自签名证书和 5 分钟过期时间。
-2. 二维码包含 Windows 设备 ID、文件夹 ID、局域网 HTTPS 地址、一次性令牌、过期
-   时间和证书 SHA-256 指纹。它不包含 Syncthing GUI API key。
-3. Android 严格验证 schema、设备 ID、文件夹 ID、有效期、私有 IPv4 地址和证书
-   指纹，然后启动内置核心。
-4. Android 在自己的配置中加入 Windows 和 Send Only 文件夹，并通过证书固定的
-   HTTPS 连接回传手机设备 ID。
-5. Windows 使用恒定时间令牌比较，通过本机 Syncthing CLI 加入手机并共享 Receive
-   Only 文件夹，然后立即停止监听器。一个配对码只能成功一次。
+ACK 使用紧凑 JSON：
 
-配对端拒绝公网地址、非 HTTPS 地址、超过 32 KiB 的请求、错误令牌、错误文件夹和
-非法设备 ID。首次配对应只在可信局域网进行；二维码在过期前也应视为临时凭据。
+```json
+{"schema":"selene-archive-ack/v1","snapshot":"SELENE-v1-20260807T120000000Z","contextSha256":"<64 hex>","byteCount":1234,"archivedAt":"2026-08-07T20:00:02+08:00","files":[{"path":"context-events.json","byteCount":1234,"sha256":"<64 hex>"}]}
+```
 
-## 持久化与自动恢复
+Android 每 15 分钟执行一次清理。只有同时满足以下条件才删除整个快照目录：
 
-- Android Syncthing 身份和配置在 `noBackupFilesDir`，不会进入 Android 自动备份。
-- Android 快照在应用私有 `filesDir/selene-sync`；卸载 SELENE 会由 Android 删除
-  应用数据，因此卸载前应确认 Windows 已完成同步。
-- Android `BOOT_COMPLETED` 和应用升级完成后会恢复已配对的 Syncthing、
-  WorkManager 和满足权限条件的运动服务。
-- Windows SELENE 启动时会寻找 winget/PATH/`SELENE_SYNCTHING_PATH` 中的
-  Syncthing，启动隐藏进程，校验 `selene-inbox-v1` 并设置当前用户的
-  `THEIA_SELENE_INBOX`。
-- Android 端“解除配对”会移除 Windows 远端配置、停止同步并保留本地快照和手机
-  Syncthing 身份。Windows 端旧设备条目可在 Syncthing GUI 中手动删除。
+1. 目录名中的 UTC 采集时间距当前时间至少 24 小时；
+2. 存在同名 ACK，schema 和 snapshot 名完全正确；
+3. ACK 的文件集合与手机目录完全相同；
+4. 每个相对路径、字节数、SHA-256、总字节数和主 JSON 哈希都一致。
 
-Android 8+ 对长期后台任务要求可见的前台服务通知。SELENE 把同步通知设为低重要性、
-无声音，但不能合法隐藏系统要求的通知。部分厂商还会在省电模式中终止后台进程；应
-把 SELENE 设为不受限制，并允许后台网络。
+离线、ACK 缺失、JSON 损坏、哈希不符、Windows 归档冲突或目录仍不足一天时，Android
+不会删除任何该快照文件。Android 删除后，同步落地点可以随之删除；Windows 持久
+Archive 不受影响。
 
-## 状态与排错
+## 一次性配对与自动迁移
 
-Android 设置页显示 Windows 是否连接、Syncthing 文件夹状态和远端完成百分比。
-Windows 显示 enrollment 是否等待、过期或成功。
+二维码使用 `selene-pair/v1`，不是普通 Syncthing 设备 ID：
 
-Android `0.5.2` 会把核心启动阶段、连续失败次数、退出码及最近一小段脱敏日志保存在
-应用私有偏好中。首次生成设备身份最长等待 120 秒；如果核心文件缺失、ABI 不支持或
-没有执行权限，会立即报告具体原因，不再统一显示“同步核心启动超时”。
+1. Windows 创建 256 位随机令牌、短期自签名证书、五分钟过期时间和私网 HTTPS 端点。
+2. 二维码只包含 Windows 设备 ID、主文件夹 ID、端点、令牌、过期时间、证书
+   SHA-256 和机器显示名；不含 GUI API key 或本机源码路径。
+3. Android 校验固定 schema/文件夹、设备 ID、过期时间、私网地址和证书指纹。
+4. Android 配置 Windows、`selene-inbox-v1` 和 `selene-ack-v1`，再通过固定证书的
+   HTTPS 回传手机设备 ID。
+5. Windows 恒定时间比较令牌，加入 Android，并把 Android 同时共享到数据和 ACK
+   文件夹，然后关闭监听器。
+
+从 0.5.2 升级时无需重新扫码。Android 前台同步服务会用已保存的 Windows 设备 ID
+幂等补建 ACK Receive Only 文件夹；Windows 启动时会读取主文件夹已有 Android 成员，
+幂等补建 ACK Send Only 文件夹并共享给相同设备。任一端暂时未升级时只会延迟 ACK 和
+自动清理，不会误删数据。
+
+## 状态显示
+
+- Android 设置页每 10 秒刷新：Windows 在线/离线、局域网或远程/中继、数据完成度、
+  数据/ACK 文件夹状态、收到的 ACK 数量和累计安全清理数量。
+- Windows 每 10 秒刷新：已连接/已配对 Android 数量、局域网或远程链路数量、本轮
+  已确认快照、待归档错误和持久归档路径。
+
+这里的“远程同步 100%”只说明 Syncthing 数据传输进度，不授权 Android 删除；删除
+权限只来自匹配的持久归档 ACK。
+
+## 持久化与更新
+
+- Android 配对信息在私有 SharedPreferences，Syncthing 身份和配置在
+  `noBackupFilesDir/syncthing`，两者都会保留于覆盖安装和 `MY_PACKAGE_REPLACED`。
+- 手机快照和 ACK 分别在 `filesDir/selene-sync` 与 `filesDir/selene-sync-acks`。
+- Windows SELENE 设置、归档和 ACK 根目录从当前用户系统应用数据目录动态派生；官方
+  Syncthing home 独立于 SELENE 可执行文件。
+- Android `BOOT_COMPLETED` 和应用升级完成后恢复已配对同步、WorkManager 和满足权限
+  条件的移动服务；Windows 登录启动可恢复后台归档。
+- 卸载 Android 应用会删除应用私有数据和设备身份，需要重新配对。覆盖安装不会。
+
+Android 8+ 要求长期同步前台服务显示系统通知。SELENE 使用无声音、低重要性通知，
+但不能规避系统要求；厂商省电策略仍可能中止后台网络，应允许 SELENE 后台运行。
+
+## 按日合并 JSON
+
+Windows `0.5.4` 每次维护同步后会在
+`%LOCALAPPDATA%\\SELENE\\Archive\\Merged` 重建
+`SELENE-merged-v1-YYYY-MM-DD.json`。它保留 Android 和 Windows 原始事件，按稳定事件
+ID 去重；不可变原始快照和 Windows 导出目录不会被修改。来源扫描失败时上一份健康的
+日文件保持不变。详细协议见 [DAILY_MERGE.zh-CN.md](DAILY_MERGE.zh-CN.md)。
+
+## 排错
 
 | 现象 | 处理 |
 | --- | --- |
-| “原生核心文件缺失”并列出设备 ABI | 当前 APK 只支持 `arm64-v8a` 和 `armeabi-v7a`；确认安装的是完整 APK，且手机 ABI 在列表内。 |
-| “原生核心文件没有执行权限” | 安装 Android 0.5.2 完整 APK；不要用会重新压缩或拆分本地库的第三方打包工具。 |
-| “核心进程退出，代码 …” | 保留界面显示的完整错误；它已包含脱敏后的最近核心输出，可直接用于定位参数、系统限制或配置损坏。 |
-| “核心已运行，但本地接口未就绪”，后跟 Apache XML feature 链接 | Android 0.5.2 已将不兼容的 DOM feature 替换为 Android pull parser；覆盖安装后重试。 |
-| 扫码后“Windows 配对请求未送达” | 确认同一局域网、Windows 网络类型为“专用”、防火墙允许 SELENE，然后生成新码。 |
-| 二维码已过期 | Windows 重新生成；旧令牌不会恢复。 |
-| Windows 找不到 Syncthing | 点击生成配对码触发 winget 安装，或设置 `SELENE_SYNCTHING_PATH` 为运行时路径。 |
-| Windows 文件夹模式错误 | 在本机 Syncthing 将 `selene-inbox-v1` 改为 Receive Only；SELENE 不会静默改写冲突配置。 |
-| 配对成功但 THEIA 没导入 | 重启 THEIA，检查 `THEIA_SELENE_INBOX`，再查看 `/api/selene-sync/status`。 |
-| 跨网络长期离线 | 保持全局发现、NAT 和中继启用；检查手机后台流量和省电限制。 |
-| Android 卸载后重新安装 | 应重新配对；新安装会生成新的设备身份。 |
-
-## 文件大小与支持范围
-
-Android APK 只打包 `arm64-v8a` 和 `armeabi-v7a` 两个真实手机 ABI，不携带 x86
-模拟器核心。快照仍使用紧凑 UTF-8 JSON、24 事件/约 120 秒运动批次和不可变目录；
-同步不会改变事件字段或降低精度。Syncthing 自己按块去重，只传输发生变化的新文件。
-
-内置核心来源、精确提交、发布 APK SHA-256 和许可证见
-[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)。
+| Android 显示 Windows 离线 | Windows 可暂时关机；数据会保留。若长期离线，检查全局发现、NAT/中继、后台流量和省电策略。 |
+| Windows 显示已配对但 0 台连接 | 确认手机同步前台服务在运行；两端系统时间正常；查看 Syncthing 连接日志。 |
+| ACK 一直为 0 | 两端都升级到 0.5.4 并启动一次；确认 `selene-ack-v1` 在 Windows 为 Send Only、Android 为 Receive Only。 |
+| “待安全归档” | 状态后会显示首个错误。检查 JSON schema、临时文件、同名归档冲突和磁盘空间；错误消失前手机不会清理。 |
+| 手机一天后仍未清理 | 先看是否有匹配 ACK。离线、哈希不符或快照实际不足 24 小时都属于预期保留。 |
+| HYPERION 没导入 | 重启 HYPERION，确认 `HYPERION_SELENE_INBOX` 指向 Windows 持久 Archive，再检查 `/api/selene-sync/status`。 |
+| 覆盖更新后要求扫码 | 不要点“解除配对”或清除应用数据；确认 Android 包名和 Windows 用户未改变。普通覆盖更新应自动迁移。 |
+| “本地接口未就绪”后跟 Apache feature URI | 安装 0.5.2 或更高版本；Android pull parser 已替代不兼容的 DOM feature。 |
+| 核心文件缺失/不可执行 | APK 仅支持 `arm64-v8a`、`armeabi-v7a`；安装未经重新打包的完整 APK。 |
 
 ## 开发验证
 
-1. 构建 Android APK，确认 `lib/arm64-v8a/libsyncthingnative.so` 和
-   `lib/armeabi-v7a/libsyncthingnative.so` 存在，x86 不存在。
-2. Windows 生成二维码；检查 payload 不包含 GUI API key 或本机绝对源码路径。
-3. 真机扫描，确认两端都自动出现远端设备与 `selene-inbox-v1`。
-4. 关闭 Wi-Fi、用手机网络创建快照，再恢复网络，确认 Windows 最终收到完整 JSON。
-5. 重启两端，确认无需重新扫码。
-6. 重复/过期/错误令牌不能增加 Windows 设备；解除配对不能删除既有快照。
+1. 既有 0.5.2 配对双端覆盖升级，确认不扫码就出现 `selene-ack-v1`。
+2. 分别验证局域网直连和不同网络/中继时，两端状态会在约 10 秒内变化。
+3. 离线创建快照，恢复连接后确认 Windows Archive 与 ACK 都出现。
+4. 把测试快照时间设为超过 24 小时，确认手机删除后 Windows Archive 仍存在且 HYPERION
+   仍能读取。
+5. 删除 ACK、篡改哈希、制造同名不同内容归档、使用损坏 JSON，确认手机始终保留。
+6. 检查 APK 只有两个 ARM ABI，二维码和日志不包含 GUI API key 或开发机绝对路径。
